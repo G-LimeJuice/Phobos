@@ -17,7 +17,6 @@ AttachEffectClass::AttachEffectClass()
 	, CurrentDelay { 0 }
 	, NeedsDurationRefresh { false }
 	, HasCumulativeAnim { false }
-	, ShouldBeDiscarded { false }
 {
 	this->HasInitialized = false;
 	AttachEffectClass::Array.emplace_back(this);
@@ -37,7 +36,6 @@ AttachEffectClass::AttachEffectClass(AttachEffectTypeClass* pType, TechnoClass* 
 	, IsCloaked { false }
 	, NeedsDurationRefresh { false }
 	, HasCumulativeAnim { false }
-	, ShouldBeDiscarded { false }
 {
 	this->HasInitialized = false;
 
@@ -121,7 +119,7 @@ void AttachEffectClass::AI()
 
 	if (this->NeedsDurationRefresh)
 	{
-		if (!this->ShouldBeDiscardedNow())
+		if (AllowedToBeActive())
 		{
 			this->RefreshDuration();
 			this->NeedsDurationRefresh = false;
@@ -142,7 +140,7 @@ void AttachEffectClass::AI()
 
 		if (this->Delay > 0)
 			this->KillAnim();
-		else if (!this->ShouldBeDiscardedNow())
+		else if (AllowedToBeActive())
 			this->RefreshDuration();
 		else
 			this->NeedsDurationRefresh = true;
@@ -271,10 +269,16 @@ void AttachEffectClass::OnlineCheck()
 void AttachEffectClass::CloakCheck()
 {
 	const auto cloakState = this->Techno->CloakState;
-	this->IsCloaked = cloakState == CloakState::Cloaked || cloakState == CloakState::Cloaking;
 
-	if (this->IsCloaked && this->Animation && AnimTypeExt::ExtMap.Find(this->Animation->Type)->DetachOnCloak)
+	if (cloakState == CloakState::Cloaked || cloakState == CloakState::Cloaking)
+	{
+		this->IsCloaked = true;
 		this->KillAnim();
+	}
+	else
+	{
+		this->IsCloaked = false;
+	}
 }
 
 void AttachEffectClass::CreateAnim()
@@ -296,9 +300,6 @@ void AttachEffectClass::CreateAnim()
 	{
 		pAnimType = this->Type->Animation;
 	}
-
-	if (this->IsCloaked && (!pAnimType || AnimTypeExt::ExtMap.Find(pAnimType)->DetachOnCloak))
-		return;
 
 	if (!this->Animation && pAnimType)
 	{
@@ -362,7 +363,7 @@ bool AttachEffectClass::CanShowAnim() const
 {
 	return (!this->IsUnderTemporal || this->Type->Animation_TemporalAction != AttachedAnimFlag::Hides)
 		&& (this->IsOnline || this->Type->Animation_OfflineAction != AttachedAnimFlag::Hides)
-		&& !this->IsInTunnel && !this->IsAnimHidden;
+		&& !this->IsCloaked && !this->IsInTunnel && !this->IsAnimHidden;
 }
 
 void AttachEffectClass::SetAnimationTunnelState(bool visible)
@@ -406,26 +407,23 @@ bool AttachEffectClass::HasExpired() const
 	return this->IsSelfOwned() && this->Delay >= 0 ? false : !this->Duration;
 }
 
-bool AttachEffectClass::ShouldBeDiscardedNow() const
+bool AttachEffectClass::AllowedToBeActive() const
 {
-	if (this->ShouldBeDiscarded)
-		return true;
-
 	auto const pTechno = this->Techno;
 
 	if (auto const pFoot = abstract_cast<FootClass*>(pTechno))
 	{
-		bool isMoving = pFoot->Locomotor->Is_Really_Moving_Now();
+		bool isMoving = pFoot->Locomotor->Is_Moving();
 
 		if (isMoving && (this->Type->DiscardOn & DiscardCondition::Move) != DiscardCondition::None)
-			return true;
+			return false;
 
 		if (!isMoving && (this->Type->DiscardOn & DiscardCondition::Stationary) != DiscardCondition::None)
-			return true;
+			return false;
 	}
 
 	if (pTechno->DrainingMe && (this->Type->DiscardOn & DiscardCondition::Drain) != DiscardCondition::None)
-		return true;
+		return false;
 
 	if (pTechno->Target)
 	{
@@ -452,11 +450,11 @@ bool AttachEffectClass::ShouldBeDiscardedNow() const
 			int distanceFromTgt = pTechno->DistanceFrom(pTechno->Target);
 
 			if ((inRange && distanceFromTgt <= distance) || (outOfRange && distanceFromTgt >= distance))
-				return true;
+				return false;
 		}
 	}
 
-	return false;
+	return true;
 }
 
 bool AttachEffectClass::IsActive() const
@@ -475,37 +473,88 @@ bool AttachEffectClass::IsFromSource(TechnoClass* pInvoker, AbstractClass* pSour
 #pragma region StaticFunctions_AttachDetachTransfer
 
 /// <summary>
-/// Creates and attaches AttachEffects of given types to a techno.
+/// Creates and attaches AttachEffect of a given type to a techno.
 /// </summary>
+/// <param name="pType">AttachEffect type.</param>
 /// <param name="pTarget">Target techno.</param>
 /// <param name="pInvokerHouse">House that invoked the attachment.</param>
 /// <param name="pInvoker">Techno that invoked the attachment.</param>
 /// <param name="pSource">Source object for the attachment e.g a Warhead or Techno.</param>
-/// <param name="attachEffectInfo">AttachEffect attach info.</param>
-/// <returns>Number of AttachEffect instances created and attached.</returns>
-int AttachEffectClass::Attach(TechnoClass* pTarget, HouseClass* pInvokerHouse, TechnoClass* pInvoker, AbstractClass* pSource, AEAttachInfoTypeClass const& attachEffectInfo)
+/// <param name="durationOverride">Override for AttachEffect duration.</param>
+/// <param name="delay">Override for AttachEffect delay.</param>
+/// <param name="initialDelay">Override for AttachEffect initial delay.</param>
+/// <param name="recreationDelay">Override for AttachEffect recreation delay.</param>
+/// <returns>True if successful, false if not.</returns>
+bool AttachEffectClass::Attach(AttachEffectTypeClass* pType, TechnoClass* pTarget, HouseClass* pInvokerHouse, TechnoClass* pInvoker,
+	AbstractClass* pSource, int durationOverride, int delay, int initialDelay, int recreationDelay)
 {
-	auto const& types = attachEffectInfo.AttachTypes;
+	if (!pType || !pTarget)
+		return false;
 
+	auto const pTargetExt = TechnoExt::ExtMap.Find(pTarget);
+
+	if (auto const pAE = AttachEffectClass::CreateAndAttach(pType, pTarget, pTargetExt->AttachedEffects, pInvokerHouse, pInvoker, pSource, durationOverride, delay, initialDelay, recreationDelay))
+	{
+		if (initialDelay <= 0)
+		{
+			if (pType->ROFMultiplier > 0.0 && pType->ROFMultiplier_ApplyOnCurrentTimer)
+			{
+				pTarget->RearmTimer.Start(static_cast<int>(pTarget->RearmTimer.GetTimeLeft() * pType->ROFMultiplier));
+				pTarget->ChargeTurretDelay = static_cast<int>(pTarget->ChargeTurretDelay * pType->ROFMultiplier);
+			}
+
+			pTargetExt->RecalculateStatMultipliers();
+
+			if (pType->HasTint())
+				pTarget->MarkForRedraw();
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+/// <summary>
+/// Creates and attaches AttachEffects of given types to a techno.
+/// </summary>
+/// <param name="types">List of AttachEffect types.</param>
+/// <param name="pTarget">Target techno.</param>
+/// <param name="pInvokerHouse">House that invoked the attachment.</param>
+/// <param name="pInvoker">Techno that invoked the attachment.</param>
+/// <param name="pSource">Source object for the attachment e.g a Warhead or Techno.</param>
+/// <param name="durationOverrides">Overrides for AttachEffect duration.</param>
+/// <param name="delays">Overrides for AttachEffect delay.</param>
+/// <param name="initialDelays">Overrides for AttachEffect initial delay.</param>
+/// <param name="recreationDelays">Overrides for AttachEffect recreation delay.</param>
+/// <returns>Number of AttachEffect instances created and attached.</returns>
+int AttachEffectClass::Attach(std::vector<AttachEffectTypeClass*> const& types, TechnoClass* pTarget, HouseClass* pInvokerHouse, TechnoClass* pInvoker,
+	AbstractClass* pSource, std::vector<int>& durationOverrides, std::vector<int> const& delays, std::vector<int> const& initialDelays, std::vector<int> const& recreationDelays)
+{
 	if (types.size() < 1 || !pTarget)
 		return false;
 
 	auto const pTargetExt = TechnoExt::ExtMap.Find(pTarget);
+
 	int attachedCount = 0;
 	bool markForRedraw = false;
 	double ROFModifier = 1.0;
-	bool selfOwned = pTarget == pSource;
 
 	for (size_t i = 0; i < types.size(); i++)
 	{
 		auto const pType = types[i];
-		auto const params = attachEffectInfo.GetAttachParams(i, selfOwned);
+		int durationOverride = 0;
+		int delay = 0;
+		int initialDelay = 0;
+		int recreationDelay = -1;
 
-		if (auto const pAE = AttachEffectClass::CreateAndAttach(pType, pTarget, pTargetExt->AttachedEffects, pInvokerHouse, pInvoker, pSource, params))
+		AttachEffectClass::SetValuesHelper(i, durationOverrides, delays, initialDelays, recreationDelays, durationOverride, delay, initialDelay, recreationDelay);
+
+		if (auto const pAE = AttachEffectClass::CreateAndAttach(pType, pTarget, pTargetExt->AttachedEffects, pInvokerHouse, pInvoker, pSource, durationOverride, delay, initialDelay, recreationDelay))
 		{
 			attachedCount++;
 
-			if (params.InitialDelay <= 0)
+			if (initialDelay <= 0)
 			{
 				if (pType->ROFMultiplier > 0.0 && pType->ROFMultiplier_ApplyOnCurrentTimer)
 					ROFModifier *= pType->ROFMultiplier;
@@ -543,10 +592,13 @@ int AttachEffectClass::Attach(TechnoClass* pTarget, HouseClass* pInvokerHouse, T
 /// <param name="pInvokerHouse">House that invoked the attachment.</param>
 /// <param name="pInvoker">Techno that invoked the attachment.</param>
 /// <param name="pSource">Source object for the attachment e.g a Warhead or Techno.</param>
-/// <param name="attachParams">Attachment parameters.</param>
+/// <param name="durationOverride">Override for AttachEffect duration.</param>
+/// <param name="delay">Override for AttachEffect delay.</param>
+/// <param name="initialDelay">Override for AttachEffect initial delay.</param>
+/// <param name="recreationDelay">Override for AttachEffect recreation delay.</param>
 /// <returns>The created and attached AttachEffect if successful, nullptr if not.</returns>
 AttachEffectClass* AttachEffectClass::CreateAndAttach(AttachEffectTypeClass* pType, TechnoClass* pTarget, std::vector<std::unique_ptr<AttachEffectClass>>& targetAEs,
-	HouseClass* pInvokerHouse, TechnoClass* pInvoker, AbstractClass* pSource, AEAttachParams const& attachParams)
+	HouseClass* pInvokerHouse, TechnoClass* pInvoker, AbstractClass* pSource, int durationOverride, int delay, int initialDelay, int recreationDelay)
 {
 	if (!pType || !pTarget)
 		return nullptr;
@@ -561,7 +613,7 @@ AttachEffectClass* AttachEffectClass::CreateAndAttach(AttachEffectTypeClass* pTy
 
 	int currentTypeCount = 0;
 	AttachEffectClass* match = nullptr;
-	std::vector<AttachEffectClass*> cumulativeMatches;
+	AttachEffectClass* sourceMatch = nullptr;
 
 	for (auto const& aePtr : targetAEs)
 	{
@@ -572,56 +624,24 @@ AttachEffectClass* AttachEffectClass::CreateAndAttach(AttachEffectTypeClass* pTy
 			currentTypeCount++;
 			match = attachEffect;
 
-			if (pType->Cumulative && (!attachParams.CumulativeRefreshSameSourceOnly || (attachEffect->Source == pSource && attachEffect->Invoker == pInvoker)))
-				cumulativeMatches.push_back(attachEffect);
+			if (attachEffect->Source == pSource && attachEffect->Invoker == pInvoker)
+				sourceMatch = attachEffect;
 		}
 	}
 
-	if (pType->Cumulative)
+	if (pType->Cumulative && pType->Cumulative_MaxCount >= 0 && currentTypeCount >= pType->Cumulative_MaxCount)
 	{
-		if (pType->Cumulative_MaxCount >= 0 && currentTypeCount >= pType->Cumulative_MaxCount)
-		{
-			if (attachParams.CumulativeRefreshAll)
-			{
-				for (auto const& ae : cumulativeMatches)
-				{
-					ae->RefreshDuration(attachParams.DurationOverride);
-				}
-			}
-			else
-			{
-				if (cumulativeMatches.size() > 0)
-				{
-					AttachEffectClass* best = nullptr;
+		if (sourceMatch)
+			sourceMatch->RefreshDuration(durationOverride);
 
-					for (auto const& ae : cumulativeMatches)
-					{
-						if (!best || ae->Duration < best->Duration)
-							best = ae;
-					}
-
-					best->RefreshDuration(attachParams.DurationOverride);
-				}
-			}
-
-			return nullptr;
-		}
-		else if (attachParams.CumulativeRefreshAll && attachParams.CumulativeRefreshAll_OnAttach)
-		{
-			for (auto const& ae : cumulativeMatches)
-			{
-				ae->RefreshDuration(attachParams.DurationOverride);
-			}
-		}
+		return nullptr;
 	}
 
 	if (!pType->Cumulative && currentTypeCount > 0 && match)
-	{
-		match->RefreshDuration(attachParams.DurationOverride);
-	}
+		match->RefreshDuration(durationOverride);
 	else
 	{
-		targetAEs.push_back(std::make_unique<AttachEffectClass>(pType, pTarget, pInvokerHouse, pInvoker, pSource, attachParams.DurationOverride, attachParams.Delay, attachParams.InitialDelay, attachParams.RecreationDelay));
+		targetAEs.push_back(std::make_unique<AttachEffectClass>(pType, pTarget, pInvokerHouse, pInvoker, pSource, durationOverride, delay, initialDelay, recreationDelay));
 		auto const pAE = targetAEs.back().get();
 
 		if (!currentTypeCount && pType->Cumulative && pType->CumulativeAnimations.size() > 0)
@@ -634,65 +654,53 @@ AttachEffectClass* AttachEffectClass::CreateAndAttach(AttachEffectTypeClass* pTy
 }
 
 /// <summary>
-/// Remove all AttachEffects matching given types from techno.
+/// Remove AttachEffects of given type from techno.
 /// </summary>
+/// <param name="types">AttachEffect type.</param>
 /// <param name="pTarget">Target techno.</param>
-/// <param name="attachEffectInfo">AttachEffect attach info.</param>
+/// <param name="minCount">Minimum instance count needed for cumulative type to be removed.</param>
+/// <param name="maxCount">Maximum instance count of cumulative type to be removed.</param>
 /// <returns>Number of AttachEffect instances removed.</returns>
-int AttachEffectClass::Detach(TechnoClass* pTarget, AEAttachInfoTypeClass const& attachEffectInfo)
+int AttachEffectClass::Detach(AttachEffectTypeClass* pType, TechnoClass* pTarget, int minCount, int maxCount)
 {
-	if (attachEffectInfo.RemoveTypes.size() < 1 || !pTarget)
-		return 0;
-
-	return DetachTypes(pTarget, attachEffectInfo, attachEffectInfo.RemoveTypes);
-}
-
-/// <summary>
-/// Remove all AttachEffects matching given groups from techno.
-/// </summary>
-/// <param name="pTarget">Target techno.</param>
-/// <param name="attachEffectInfo">AttachEffect attach info.</param>
-/// <returns>Number of AttachEffect instances removed.</returns>
-int AttachEffectClass::DetachByGroups(TechnoClass* pTarget, AEAttachInfoTypeClass const& attachEffectInfo)
-{
-	auto const& groups = attachEffectInfo.RemoveGroups;
-
-	if (groups.size() < 1 || !pTarget)
+	if (!pType || !pTarget)
 		return 0;
 
 	auto const pTargetExt = TechnoExt::ExtMap.Find(pTarget);
-	std::vector<AttachEffectTypeClass*> types;
+	int detachedCount = AttachEffectClass::RemoveAllOfType(pType, pTarget, minCount, maxCount);
 
-	for (auto const& attachEffect : pTargetExt->AttachedEffects)
+	if (detachedCount > 0)
 	{
-		auto const pType = attachEffect->Type;
+		pTargetExt->RecalculateStatMultipliers();
 
-		if (pType->HasGroups(groups, false))
-			types.push_back(pType);
+		if (pType->HasTint())
+			pTarget->MarkForRedraw();
 	}
 
-	return DetachTypes(pTarget, attachEffectInfo, types);
+	return detachedCount;
 }
 
 /// <summary>
 /// Remove all AttachEffects matching given types from techno.
 /// </summary>
+/// <param name="types">List of AttachEffect types.</param>
 /// <param name="pTarget">Target techno.</param>
-/// <param name="attachEffectInfo">AttachEffect attach info.</param>
-/// <param name="types">AttachEffect types.</param>
+/// <param name="minCounts">Minimum instance counts needed for cumulative types to be removed.</param>
+/// <param name="maxCounts">Maximum instance counts of cumulative types to be removed.</param>
 /// <returns>Number of AttachEffect instances removed.</returns>
-int AttachEffectClass::DetachTypes(TechnoClass* pTarget, AEAttachInfoTypeClass const& attachEffectInfo, std::vector<AttachEffectTypeClass*> const& types)
+int AttachEffectClass::Detach(std::vector<AttachEffectTypeClass*> const& types, TechnoClass* pTarget, std::vector<int> const& minCounts, std::vector<int> const& maxCounts)
 {
+	if (types.size() < 1 || !pTarget)
+		return 0;
+
 	auto const pTargetExt = TechnoExt::ExtMap.Find(pTarget);
 	int detachedCount = 0;
 	bool markForRedraw = false;
-	auto const& minCounts = attachEffectInfo.CumulativeRemoveMinCounts;
-	auto const& maxCounts = attachEffectInfo.CumulativeRemoveMaxCounts;
 	size_t index = 0, minSize = minCounts.size(), maxSize = maxCounts.size();
 
 	for (auto const pType : types)
 	{
-		int minCount = minSize > 0 ? (index < minSize ? minCounts.at(index) : minCounts.at(minSize - 1)) : -1;
+		int minCount = minSize > 0 ? (index < minSize ? minCounts.at(index) : minCounts.at(minSize-1)) : -1;
 		int maxCount = maxSize > 0 ? (index < maxSize ? maxCounts.at(index) : maxCounts.at(maxSize - 1)) : -1;
 
 		int count = AttachEffectClass::RemoveAllOfType(pType, pTarget, minCount, maxCount);
@@ -711,6 +719,33 @@ int AttachEffectClass::DetachTypes(TechnoClass* pTarget, AEAttachInfoTypeClass c
 		pTarget->MarkForRedraw();
 
 	return detachedCount;
+}
+
+/// <summary>
+/// Remove all AttachEffects matching given groups from techno.
+/// </summary>
+/// <param name="groups">List of group ID's.</param>
+/// <param name="pTarget">Target techno.</param>
+/// <param name="minCounts">Minimum instance counts needed for cumulative types to be removed.</param>
+/// <param name="maxCounts">Maximum instance counts of cumulative types to be removed.</param>
+/// <returns>Number of AttachEffect instances removed.</returns>
+int AttachEffectClass::DetachByGroups(std::vector<std::string> const& groups, TechnoClass* pTarget, std::vector<int> const& minCounts, std::vector<int> const& maxCounts)
+{
+	if (groups.size() < 1 || !pTarget)
+		return 0;
+
+	auto const pTargetExt = TechnoExt::ExtMap.Find(pTarget);
+	std::vector<AttachEffectTypeClass*> types;
+
+	for (auto const& attachEffect : pTargetExt->AttachedEffects)
+	{
+		auto const pType = attachEffect->Type;
+
+		if (pType->HasGroups(groups, false))
+			types.push_back(pType);
+	}
+
+	return Detach(types, pTarget, minCounts, maxCounts);
 }
 
 /// <summary>
@@ -756,6 +791,7 @@ int AttachEffectClass::RemoveAllOfType(AttachEffectTypeClass* pType, TechnoClass
 				if (!pType->Cumulative || !pType->ExpireWeapon_CumulativeOnlyOnce || pTargetExt->GetAttachedEffectCumulativeCount(pType) < 2)
 					expireWeapons.push_back(pType->ExpireWeapon);
 			}
+
 
 			if (pType->Cumulative && pType->CumulativeAnimations.size() > 0)
 				pTargetExt->UpdateCumulativeAttachEffects(pType, attachEffect);
@@ -836,10 +872,7 @@ void AttachEffectClass::TransferAttachedEffects(TechnoClass* pSource, TechnoClas
 		}
 		else
 		{
-			AEAttachParams info {};
-			info.DurationOverride = attachEffect->DurationOverride;
-
-			if (auto const pAE = AttachEffectClass::CreateAndAttach(type, pTarget, pTargetExt->AttachedEffects, attachEffect->InvokerHouse, attachEffect->Invoker, attachEffect->Source, info))
+			if (auto const pAE = AttachEffectClass::CreateAndAttach(type, pTarget, pTargetExt->AttachedEffects, attachEffect->InvokerHouse, attachEffect->Invoker, attachEffect->Source, attachEffect->DurationOverride))
 				pAE->Duration = attachEffect->Duration;
 		}
 
@@ -876,7 +909,6 @@ bool AttachEffectClass::Serialize(T& Stm)
 		.Process(this->HasInitialized)
 		.Process(this->NeedsDurationRefresh)
 		.Process(this->HasCumulativeAnim)
-		.Process(this->ShouldBeDiscarded)
 		.Success();
 }
 
@@ -889,3 +921,4 @@ bool AttachEffectClass::Save(PhobosStreamWriter& Stm) const
 {
 	return const_cast<AttachEffectClass*>(this)->Serialize(Stm);
 }
+

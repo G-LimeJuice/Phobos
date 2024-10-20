@@ -169,7 +169,8 @@ public:
 
 		ExtData(ScriptClass* OwnerObject) : Extension<ScriptClass>(OwnerObject)
 			// Nothing yet
-		{ }
+		{
+		}
 
 		virtual ~ExtData() = default;
 

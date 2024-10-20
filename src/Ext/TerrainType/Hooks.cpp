@@ -335,3 +335,4 @@ DEFINE_HOOK(0x568432, MapClass_PlaceDown_0x0TerrainTypes, 0x8)
 
 	return 0;
 }
+

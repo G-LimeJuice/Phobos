@@ -1,7 +1,9 @@
+#include "Body.h"
+
 #include <Ext/CaptureManager/Body.h>
 #include <Ext/WarheadType/Body.h>
 
-static void TransferMindControlOnDeploy(TechnoClass* pTechnoFrom, TechnoClass* pTechnoTo)
+void TechnoExt::TransferMindControlOnDeploy(TechnoClass* pTechnoFrom, TechnoClass* pTechnoTo)
 {
 	auto pAnimType = pTechnoFrom->MindControlRingAnim ?
 		pTechnoFrom->MindControlRingAnim->Type : TechnoExt::ExtMap.Find(pTechnoFrom)->MindControlRingAnimType;
@@ -30,10 +32,10 @@ static void TransferMindControlOnDeploy(TechnoClass* pTechnoFrom, TechnoClass* p
 				int nSound = pTechnoTo->GetTechnoType()->MindClearedSound;
 				if (nSound == -1)
 					nSound = RulesClass::Instance->MindClearedSound;
-
 				if (nSound != -1)
 					VocClass::PlayIndexAtPos(nSound, pTechnoTo->Location);
 			}
+
 		}
 	}
 	else if (auto MCHouse = pTechnoFrom->MindControlledByHouse)
@@ -48,22 +50,21 @@ static void TransferMindControlOnDeploy(TechnoClass* pTechnoFrom, TechnoClass* p
 		auto const pBuilding = abstract_cast<BuildingClass*>(pTechnoTo);
 		CoordStruct location = pTechnoTo->GetCoords();
 
-		location.Z += pBuilding
-			? pBuilding->Type->Height * Unsorted::LevelHeight
-			: pTechnoTo->GetTechnoType()->MindControlRingOffset;
-
-		auto const pAnim = pAnimType
-			? GameCreate<AnimClass>(pAnimType, location, 0, 1)
-			: nullptr;
-
-		if (pAnim)
+		if (pBuilding)
+			location.Z += pBuilding->Type->Height * Unsorted::LevelHeight;
+		else
+			location.Z += pTechnoTo->GetTechnoType()->MindControlRingOffset;
+		if(pAnimType)
+		if (auto const pAnim = GameCreate<AnimClass>(pAnimType, location, 0, 1))
 		{
+			pTechnoTo->MindControlRingAnim = pAnim;
+
 			if (pBuilding)
 				pAnim->ZAdjust = -1024;
 
-			pTechnoTo->MindControlRingAnim = pAnim;
 			pAnim->SetOwnerObject(pTechnoTo);
 		}
+
 	}
 }
 
@@ -72,7 +73,7 @@ DEFINE_HOOK(0x739956, UnitClass_Deploy_Transfer, 0x6)
 	GET(UnitClass*, pUnit, EBP);
 	GET(BuildingClass*, pStructure, EBX);
 
-	TransferMindControlOnDeploy(pUnit, pStructure);
+	TechnoExt::TransferMindControlOnDeploy(pUnit, pStructure);
 	ShieldClass::SyncShieldToAnother(pUnit, pStructure);
 	TechnoExt::SyncInvulnerability(pUnit, pStructure);
 	AttachEffectClass::TransferAttachedEffects(pUnit, pStructure);
@@ -85,7 +86,7 @@ DEFINE_HOOK(0x44A03C, BuildingClass_Mi_Selling_Transfer, 0x6)
 	GET(BuildingClass*, pStructure, EBP);
 	GET(UnitClass*, pUnit, EBX);
 
-	TransferMindControlOnDeploy(pStructure, pUnit);
+	TechnoExt::TransferMindControlOnDeploy(pStructure, pUnit);
 	ShieldClass::SyncShieldToAnother(pStructure, pUnit);
 	TechnoExt::SyncInvulnerability(pStructure, pUnit);
 	AttachEffectClass::TransferAttachedEffects(pStructure, pUnit);
@@ -155,3 +156,4 @@ DEFINE_HOOK(0x73FEC1, UnitClass_WhatAction_DeploysIntoDesyncFix, 0x6)
 }
 
 #pragma endregion
+

@@ -108,16 +108,14 @@ DEFINE_HOOK(0x6D528A, TacticalClass_DrawPlacement_PlacementPreview, 0x6)
 		}
 
 
-		Point2D point;
-		{
 			CoordStruct offset = pTypeExt->PlacementPreview_Offset;
 			int nHeight = offset.Z + pCell->GetFloorHeight({ 0, 0 });
-			CoordStruct coords = CellClass::Cell2Coord(pCell->MapCoords, nHeight);
-
-			point = TacticalClass::Instance->CoordsToClient(coords).first;
-			point.X += offset.X;
-			point.Y += offset.Y;
-		}
+			Point2D nPoint = TacticalClass::Instance->CoordsToClient(
+				CellClass::Cell2Coord(pCell->MapCoords, nHeight)
+			).first;
+			nPoint.X += offset.X;
+			nPoint.Y += offset.Y;
+		
 
 		BlitterFlags blitFlags = pTypeExt->PlacementPreview_Translucency.Get(pRules->PlacementPreview_Translucency) |
 			BlitterFlags::Centered | BlitterFlags::Nonzero | BlitterFlags::MultiPass;
@@ -127,10 +125,10 @@ DEFINE_HOOK(0x6D528A, TacticalClass_DrawPlacement_PlacementPreview, 0x6)
 			: pTypeExt->PlacementPreview_Palette.GetOrDefaultConvert(FileSystem::UNITx_PAL());
 
 		DSurface* pSurface = DSurface::Temp;
-		RectangleStruct rect = pSurface->GetRect();
-		rect.Height -= 32; // account for bottom bar
+		RectangleStruct nRect = pSurface->GetRect();
+		nRect.Height -= 32; // account for bottom bar
 
-		CC_Draw_Shape(pSurface, pPalette, pImage, nImageFrame, &point, &rect, blitFlags,
+		CC_Draw_Shape(pSurface, pPalette, pImage, nImageFrame, &nPoint, &nRect, blitFlags,
 			0, 0, ZGradient::Ground, 1000, 0, nullptr, 0, 0, 0);
 	}
 
@@ -217,45 +215,3 @@ DEFINE_HOOK(0x5F5416, ObjectClass_ReceiveDamage_CanC4DamageRounding, 0x6)
 
 	return SkipGameCode;
 }
-
-#pragma region BuildingProximity
-
-namespace ProximityTemp
-{
-	BuildingTypeClass* pType = nullptr;
-}
-
-DEFINE_HOOK(0x4A8F20, isplayClass_BuildingProximityCheck_SetContext, 0x5)
-{
-	GET(BuildingTypeClass*, pType, ESI);
-
-	ProximityTemp::pType = pType;
-
-	return 0;
-}
-
-DEFINE_HOOK(0x4A8FD7, DisplayClass_BuildingProximityCheck_BuildArea, 0x6)
-{
-	enum { SkipBuilding = 0x4A902C };
-
-	GET(BuildingClass*, pCellBuilding, ESI);
-
-	auto const pTypeExt = BuildingTypeExt::ExtMap.Find(pCellBuilding->Type);
-
-	if (pTypeExt->NoBuildAreaOnBuildup && pCellBuilding->CurrentMission == Mission::Construction)
-		return SkipBuilding;
-
-	auto const& pBuildingsAllowed = BuildingTypeExt::ExtMap.Find(ProximityTemp::pType)->Adjacent_Allowed;
-
-	if (pBuildingsAllowed.size() > 0 && !pBuildingsAllowed.Contains(pCellBuilding->Type))
-		return SkipBuilding;
-
-	auto const& pBuildingsDisallowed = BuildingTypeExt::ExtMap.Find(ProximityTemp::pType)->Adjacent_Disallowed;
-
-	if (pBuildingsDisallowed.size() > 0 && pBuildingsDisallowed.Contains(pCellBuilding->Type))
-		return SkipBuilding;
-
-	return 0;
-}
-
-#pragma endregion

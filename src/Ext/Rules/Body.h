@@ -158,11 +158,8 @@ public:
 		Valueable<bool> AIFireSale;
 		Valueable<int> AIFireSaleDelay;
 		Valueable<bool> AIAllToHunt;
-		Valueable<bool> RepairBaseNodes;
-
-		Valueable<bool> WarheadParticleAlphaImageIsLightFlash;
-		Valueable<int> CombatLightDetailLevel;
-		Valueable<int> LightFlashAlphaImageDetailLevel;
+		ValueableVector<bool> RepairBaseNodes;
+		Valueable<bool> MCVRedeploysInCampaign;
 
 		ExtData(RulesClass* OwnerObject) : Extension<RulesClass>(OwnerObject)
 			, Storage_TiberiumIndex { -1 }
@@ -278,10 +275,8 @@ public:
 			, AIFireSale { true }
 			, AIFireSaleDelay { 0 }
 			, AIAllToHunt { true }
-			, RepairBaseNodes { false }
-			, WarheadParticleAlphaImageIsLightFlash { false }
-			, CombatLightDetailLevel { 0 }
-			, LightFlashAlphaImageDetailLevel { 0 }
+			, RepairBaseNodes {}
+			, MCVRedeploysInCampaign { false }
 		{ }
 
 		virtual ~ExtData() = default;

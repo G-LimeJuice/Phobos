@@ -29,7 +29,7 @@ public:
 		bool SnappedToTarget; // Used for custom trajectory projectile target snap checks
 		int DamageNumberOffset;
 
-		TrajectoryPointer Trajectory;
+		PhobosTrajectory* Trajectory; // TODO: why not unique_ptr
 
 		ExtData(BulletClass* OwnerObject) : Extension<BulletClass>(OwnerObject)
 			, TypeExtData { nullptr }

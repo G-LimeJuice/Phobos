@@ -117,3 +117,4 @@ DEFINE_HOOK(0x685EB1, PhobosSaveVariables, 0x5)//Lose
 
 	return 0;
 }
+

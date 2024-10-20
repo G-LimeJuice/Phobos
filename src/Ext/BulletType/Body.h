@@ -28,7 +28,8 @@ public:
 		ValueableIdxVector<LaserTrailTypeClass> LaserTrail_Types;
 		Nullable<double> Gravity;
 
-		TrajectoryTypePointer TrajectoryType;
+		PhobosTrajectoryType* TrajectoryType;// TODO: why not unique_ptr
+		Valueable<double> Trajectory_Speed;
 
 		Valueable<bool> Shrapnel_AffectsGround;
 		Valueable<bool> Shrapnel_AffectsBuildings;
@@ -45,19 +46,6 @@ public:
 		Valueable<bool> Arcing_AllowElevationInaccuracy;
 		Valueable<WeaponTypeClass*> ReturnWeapon;
 
-		Valueable<bool> Splits;
-		Valueable<double> AirburstSpread;
-		Valueable<double> RetargetAccuracy;
-		Valueable<bool> RetargetSelf;
-		Valueable<double> RetargetSelf_Probability;
-		Nullable<bool> AroundTarget;
-		Valueable<bool> Airburst_UseCluster;
-		Valueable<bool> Airburst_RandomClusters;
-		Valueable<Leptons> Splits_TargetingDistance;
-		Valueable<int> Splits_TargetCellRange;
-		Valueable<bool> Splits_UseWeaponTargeting;
-		Valueable<bool> AirburstWeapon_ApplyFirepowerMult;
-
 		// Ares 0.7
 		Nullable<Leptons> BallisticScatter_Min;
 		Nullable<Leptons> BallisticScatter_Max;
@@ -69,7 +57,8 @@ public:
 			, Interceptable_WeaponOverride {}
 			, LaserTrail_Types {}
 			, Gravity {}
-			, TrajectoryType { }
+			, TrajectoryType { nullptr }
+			, Trajectory_Speed { 100.0 }
 			, Shrapnel_AffectsGround { false }
 			, Shrapnel_AffectsBuildings { false }
 			, Shrapnel_UseWeaponTargeting { false }
@@ -84,18 +73,6 @@ public:
 			, AAOnly { false }
 			, Arcing_AllowElevationInaccuracy { true }
 			, ReturnWeapon {}
-			, Splits { false }
-			, AirburstSpread { 1.5 }
-			, RetargetAccuracy { 0.0 }
-			, RetargetSelf { true }
-			, RetargetSelf_Probability { 0.5 }
-			, AroundTarget {}
-			, Airburst_UseCluster { false }
-			, Airburst_RandomClusters { false }
-			, Splits_TargetingDistance{ Leptons(1280) }
-			, Splits_TargetCellRange { 3 }
-			, Splits_UseWeaponTargeting { false }
-			, AirburstWeapon_ApplyFirepowerMult { false }
 		{ }
 
 		virtual ~ExtData() = default;
@@ -115,8 +92,7 @@ public:
 		void TrajectoryValidation() const;
 	};
 
-	class ExtContainer final : public Container<BulletTypeExt>
-	{
+	class ExtContainer final : public Container<BulletTypeExt> {
 	public:
 		ExtContainer();
 		~ExtContainer();

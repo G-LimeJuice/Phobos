@@ -77,8 +77,7 @@ public:
 			return false;
 
 
-		for (size_t i = 0; i < Count; ++i)
-		{
+		for (size_t i = 0; i < Count; ++i) {
 			void* oldPtr = nullptr;
 			decltype(Name) name;
 
@@ -116,11 +115,11 @@ public:
 		this->Name = Title;
 	}
 
-	void LoadFromINI(CCINIClass* pINI) = delete;
+	void LoadFromINI(CCINIClass* pINI) { static_cast<T*>(this)->LoadFromINI(pINI); }//=0;
 
-	void LoadFromStream(PhobosStreamReader& Stm) = delete;
+	void LoadFromStream(PhobosStreamReader& Stm) { static_cast<T*>(this)->LoadFromStream(Stm); }//=0;
 
-	void SaveToStream(PhobosStreamWriter& Stm) = delete;
+	void SaveToStream(PhobosStreamWriter& Stm) { static_cast<T*>(this)->SaveToStream(Stm); } //=0;
 
 	PhobosFixedString<32> Name;
 };

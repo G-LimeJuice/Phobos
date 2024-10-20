@@ -21,3 +21,4 @@ DEFINE_HOOK(0x773087, WeaponTypeClass_GetSpeed_ApplyGravity, 0x6)
 
 	return 0x7730A3;
 }
+
